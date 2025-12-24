@@ -1,5 +1,11 @@
-# Santa Radar HQ (v2.4) — Any City Worldwide + Infrared Look + Satellite WITH Country Labels + PT-BR toggle
-# Streamlit Cloud requirements.txt:
+# Santa Radar HQ (v2.5) — FULL FIXED VERSION
+# ✅ Any city in the world (geopy)
+# ✅ Infrared looks infrared (heat glow overlay)
+# ✅ Satellite view shows labels/borders (satellite-streets) when Mapbox token exists
+# ✅ ALWAYS shows a world map even WITHOUT Mapbox token (CARTO fallback)
+# ✅ PT-BR / English toggle
+#
+# requirements.txt (Streamlit Cloud):
 # streamlit
 # pandas
 # numpy
@@ -7,38 +13,10 @@
 # streamlit-autorefresh
 # geopy
 #
-# Streamlit Cloud (Secrets) recommended for Mapbox styles:
+# Streamlit Cloud → Secrets (optional but recommended for true satellite):
 # MAPBOX_API_KEY="YOUR_MAPBOX_TOKEN"
+
 import os
-
-# --- Map token + safe fallback basemap ---
-MAPBOX_TOKEN = None
-if "MAPBOX_API_KEY" in st.secrets:
-    MAPBOX_TOKEN = st.secrets["MAPBOX_API_KEY"]
-elif os.environ.get("MAPBOX_API_KEY"):
-    MAPBOX_TOKEN = os.environ["MAPBOX_API_KEY"]
-
-if MAPBOX_TOKEN:
-    pdk.settings.mapbox_api_key = MAPBOX_TOKEN
-
-# Free basemap style (no token needed)
-CARTO_POSITRON = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-CARTO_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-
-# Choose styles
-if vision == "Satellite View":
-    if MAPBOX_TOKEN:
-        # satellite with labels
-        map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
-    else:
-        # no token -> fallback to free map (can't do satellite)
-        map_style = CARTO_POSITRON
-        st.warning("Satellite basemap needs a Mapbox token. Showing a free world map instead.")
-elif vision == "Infrared Heat":
-    map_style = CARTO_DARK if not MAPBOX_TOKEN else "mapbox://styles/mapbox/dark-v11"
-else:
-    map_style = CARTO_DARK if not MAPBOX_TOKEN else "mapbox://styles/mapbox/dark-v11"
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -49,13 +27,33 @@ from streamlit_autorefresh import st_autorefresh
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 
 # -----------------------------
 # AUTO-REFRESH + PAGE
 # -----------------------------
 st.set_page_config(page_title="Santa Radar HQ", layout="wide")
 st_autorefresh(interval=30000, key="santa_heartbeat")
+
+# -----------------------------
+# SAFE MAPBOX TOKEN HANDLING (NO CRASH)
+# -----------------------------
+MAPBOX_TOKEN = None
+try:
+    if hasattr(st, "secrets") and "MAPBOX_API_KEY" in st.secrets:
+        MAPBOX_TOKEN = st.secrets["MAPBOX_API_KEY"]
+except Exception:
+    MAPBOX_TOKEN = None
+
+if not MAPBOX_TOKEN:
+    MAPBOX_TOKEN = os.environ.get("MAPBOX_API_KEY")
+
+if MAPBOX_TOKEN:
+    pdk.settings.mapbox_api_key = MAPBOX_TOKEN
+
+# Free basemaps (always work, show countries)
+CARTO_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+CARTO_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 
 # -----------------------------
 # LANGUAGE STRINGS
@@ -88,6 +86,7 @@ STR = {
         "sat_overlay": "🛰️ Satellite Paths Overlay",
         "infra_glow": "🔥 Infrared Glow Strength",
         "labels": "🗺️ Show country labels",
+        "sat_need_token": "🛰️ Satellite imagery needs a Mapbox token. Showing world map instead.",
     },
     "pt-BR": {
         "title": "🚀 Comando de Voo do Papai Noel",
@@ -116,6 +115,7 @@ STR = {
         "sat_overlay": "🛰️ Trilhas de Satélites (Overlay)",
         "infra_glow": "🔥 Força do Brilho Infravermelho",
         "labels": "🗺️ Mostrar nomes de países",
+        "sat_need_token": "🛰️ Imagem de satélite precisa de token Mapbox. Mostrando mapa-múndi.",
     },
 }
 
@@ -130,7 +130,7 @@ def play_sound(url: str):
 # -----------------------------
 @st.cache_data(ttl=60 * 60)
 def geocode_city(city_text: str):
-    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app_v24")
+    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app_v25")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
     loc = geocode(city_text)
     if not loc:
@@ -138,7 +138,7 @@ def geocode_city(city_text: str):
     return loc.latitude, loc.longitude, loc.address
 
 # -----------------------------
-# TIME + WIND
+# TIME + WIND + TELEMETRY
 # -----------------------------
 now_utc = datetime.now(timezone.utc)
 wind_speed = 45 + np.random.randint(-15, 60)
@@ -169,7 +169,7 @@ for m in range(0, minutes + 1, 10):
 s_lat, s_lon = (path[-1]["lat"], path[-1]["lon"]) if path else (90, 0)
 
 # -----------------------------
-# SIDEBAR: LANGUAGE + MODES + CITY
+# SIDEBAR: LANGUAGE + MODES + CITY + SEAT
 # -----------------------------
 SEATS_EN = {
     "🎄 Window Seat": 1.00,
@@ -201,6 +201,7 @@ with st.sidebar:
     )
 
     st.divider()
+
     st.subheader(T["seat_title"])
     if lang == "pt-BR":
         seat_name = st.radio(T["seat_label"], list(SEATS_PT.keys()), index=0)
@@ -210,6 +211,7 @@ with st.sidebar:
         seat_multiplier = SEATS_EN[seat_name]
 
     st.divider()
+
     st.subheader(T["city_title"])
     default_city = "Düsseldorf" if lang == "en" else "São Paulo, Brasil"
     city_input = st.text_input(T["city_help"], value=default_city).strip()
@@ -234,15 +236,19 @@ with st.sidebar:
         glow = st.slider(T["infra_glow"], 0.6, 2.5, 1.2, 0.1)
 
 # -----------------------------
-# MAP STYLE (UPDATED)
-# Satellite View now supports:
-# - satellite-streets-v12 (labels on)
-# - satellite-v9 (labels off)
+# MAP STYLE (ALWAYS SHOW WORLD MAP)
 # -----------------------------
 if vision == "Satellite View":
-    map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
+    if MAPBOX_TOKEN:
+        map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
+    else:
+        map_style = CARTO_LIGHT
+        st.warning(T["sat_need_token"])
+elif vision == "Infrared Heat":
+    # dark base helps infrared glow pop; CARTO is safe fallback
+    map_style = "mapbox://styles/mapbox/dark-v11" if MAPBOX_TOKEN else CARTO_DARK
 else:
-    map_style = "mapbox://styles/mapbox/dark-v11"
+    map_style = "mapbox://styles/mapbox/dark-v11" if MAPBOX_TOKEN else CARTO_DARK
 
 # -----------------------------
 # CITY LOOKUP
@@ -296,7 +302,6 @@ if is_midnight:
     play_sound("https://www.soundjay.com/holiday/sounds/sleigh-bells-7.mp3")
     st.balloons()
 
-# Top Gauges
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(T["presents"], f"{presents:,}")
 m2.metric(T["speed"], f"{current_speed:,} km/h", delta=T["wind_delay"] if is_delayed else T["stable"])
@@ -314,7 +319,6 @@ with col_map:
 
     layers = []
 
-    # Santa path points
     santa_color = [0, 255, 65] if vision == "Tactical Night Vision" else ([255, 255, 255] if vision == "Satellite View" else [255, 120, 0])
     layers.append(
         pdk.Layer(
@@ -327,7 +331,6 @@ with col_map:
         )
     )
 
-    # City marker
     layers.append(
         pdk.Layer(
             "ScatterplotLayer",
