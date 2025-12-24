@@ -1,11 +1,13 @@
 # Santa Radar HQ — Night Vision ONLY (World map guaranteed) + Signals + PT-BR/EN
-# ✅ CARTO basemap (no Mapbox token needed)
+# ✅ CARTO basemap (no Mapbox token needed)  ✅ map_provider="carto"
 # ✅ Any city in the world (geopy)
 # ✅ Hourly ping (once per hour) shows distance
-# ✅ Midnight alert:
+# ✅ Midnight event:
+#    - If windy: shows "delay due to winds / atraso por ventos"
 #    - If close (<= 1 km): rapid beeps + balloons
-#    - If windy (delay): shows "atraso por ventos" message at midnight
-# ✅ English / Português (Brasil) toggle
+# ✅ NEW: Visited cities trail (green dots on map)
+# ✅ NEW: City "unlock" sound + toast when a new city gets visited
+# ✅ NEW: Progress bar (visited / total)
 #
 # requirements.txt:
 # streamlit
@@ -36,12 +38,14 @@ st_autorefresh(interval=30000, key="santa_heartbeat")  # refresh every 30s
 CARTO_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 
 # -----------------------------
-# SESSION STATE (prevents repeated pings)
+# SESSION STATE (prevents repeated pings / repeats)
 # -----------------------------
 if "last_hour_ping" not in st.session_state:
-    st.session_state.last_hour_ping = None  # store "YYYY-MM-DD HH"
+    st.session_state.last_hour_ping = None  # "YYYY-MM-DD HH"
 if "midnight_event_done" not in st.session_state:
-    st.session_state.midnight_event_done = False  # only once per midnight minute
+    st.session_state.midnight_event_done = False
+if "last_visited_count" not in st.session_state:
+    st.session_state.last_visited_count = 0
 
 # -----------------------------
 # SOUND (simple HTML audio)
@@ -55,6 +59,7 @@ def play_sound(url: str):
 # Sounds (public sample URLs)
 BEEP_URL = "https://www.soundjay.com/buttons/sounds/beep-07.mp3"
 PING_URL = "https://www.soundjay.com/buttons/sounds/button-09.mp3"
+UNLOCK_URL = "https://www.soundjay.com/buttons/sounds/button-4.mp3"
 
 # -----------------------------
 # LANGUAGE STRINGS
@@ -89,6 +94,10 @@ TXT = {
         "midnight_close": "🎊 MIDNIGHT ALERT: Santa is basically at your city! (≤ 1 km)",
         "midnight_delay": "🌬️ MIDNIGHT UPDATE: Strong winds are causing a delay — Santa will arrive a bit later!",
         "hourly_ping": "🛰️ Hourly Radar Ping: Santa is {d} km away!",
+        "visited_title": "✅ Cities Visited So Far",
+        "visited_none": "⏳ Santa is just getting started!",
+        "progress": "🎯 Journey Progress",
+        "unlock_toast": "🎄 New city visited: {city}",
     },
     "pt-BR": {
         "app_title": "🛷 Santa Radar HQ — Visão Noturna",
@@ -119,15 +128,36 @@ TXT = {
         "midnight_close": "🎊 ALERTA DE MEIA-NOITE: O Papai Noel está praticamente na sua cidade! (≤ 1 km)",
         "midnight_delay": "🌬️ ATUALIZAÇÃO DA MEIA-NOITE: Ventos fortes causaram atraso — o Papai Noel vai chegar um pouco mais tarde!",
         "hourly_ping": "🛰️ Ping de hora em hora: o Papai Noel está a {d} km!",
+        "visited_title": "✅ Cidades Visitadas Até Agora",
+        "visited_none": "⏳ O Papai Noel está só começando!",
+        "progress": "🎯 Progresso da Viagem",
+        "unlock_toast": "🎄 Nova cidade visitada: {city}",
     },
 }
+
+# -----------------------------
+# WORLD CITIES SANTA VISITS (unlock by UTC hour)
+# Use 'hour_utc' in 0..23. Add more anytime.
+# -----------------------------
+SANTA_CITIES = [
+    {"en": "Suva, Fiji", "pt": "Suva, Fiji", "lat": -18.1248, "lon": 178.4501, "hour_utc": 12},
+    {"en": "Auckland, New Zealand", "pt": "Auckland, Nova Zelândia", "lat": -36.8485, "lon": 174.7633, "hour_utc": 13},
+    {"en": "Sydney, Australia", "pt": "Sydney, Austrália", "lat": -33.8688, "lon": 151.2093, "hour_utc": 14},
+    {"en": "Tokyo, Japan", "pt": "Tóquio, Japão", "lat": 35.6762, "lon": 139.6503, "hour_utc": 15},
+    {"en": "Beijing, China", "pt": "Pequim, China", "lat": 39.9042, "lon": 116.4074, "hour_utc": 16},
+    {"en": "Dubai, UAE", "pt": "Dubai, Emirados Árabes", "lat": 25.2048, "lon": 55.2708, "hour_utc": 18},
+    {"en": "Istanbul, Türkiye", "pt": "Istambul, Turquia", "lat": 41.0082, "lon": 28.9784, "hour_utc": 19},
+    {"en": "Berlin, Germany", "pt": "Berlim, Alemanha", "lat": 52.5200, "lon": 13.4050, "hour_utc": 20},
+    {"en": "Paris, France", "pt": "Paris, França", "lat": 48.8566, "lon": 2.3522, "hour_utc": 22},
+    {"en": "London, UK", "pt": "Londres, Reino Unido", "lat": 51.5074, "lon": -0.1278, "hour_utc": 23},
+]
 
 # -----------------------------
 # GEO (ANY CITY)
 # -----------------------------
 @st.cache_data(ttl=60 * 60)
 def geocode_city(city_text: str):
-    geolocator = Nominatim(user_agent="santa_radar_nightvision_bilingual")
+    geolocator = Nominatim(user_agent="santa_radar_nightvision_visited")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
     loc = geocode(city_text)
     if not loc:
@@ -135,13 +165,13 @@ def geocode_city(city_text: str):
     return loc.latitude, loc.longitude, loc.address
 
 # -----------------------------
-# WIND / TIME
+# TIME + WIND
 # -----------------------------
 now_utc = datetime.now(timezone.utc)
 wind_speed = 45 + np.random.randint(-15, 60)
 is_delayed = wind_speed > 85
 
-# Düsseldorf time (UTC+1) for the "midnight" event
+# Düsseldorf time (UTC+1) for midnight events
 now_dus = now_utc + timedelta(hours=1)
 is_midnight_minute = (now_dus.hour == 0 and now_dus.minute == 0)
 
@@ -149,7 +179,11 @@ is_midnight_minute = (now_dus.hour == 0 and now_dus.minute == 0)
 # SIDEBAR (language first)
 # -----------------------------
 with st.sidebar:
-    lang = st.selectbox(TXT["en"]["lang"], ["en", "pt-BR"], format_func=lambda x: "English" if x == "en" else "Português (Brasil)")
+    lang = st.selectbox(
+        TXT["en"]["lang"],
+        ["en", "pt-BR"],
+        format_func=lambda x: "English" if x == "en" else "Português (Brasil)"
+    )
     t = TXT[lang]
 
     st.header(t["sidebar_title"])
@@ -168,7 +202,7 @@ with st.sidebar:
         st.success(t["wind_ok"])
 
 # -----------------------------
-# TELEMETRY (Santa path)
+# TELEMETRY (Santa simulated path)
 # -----------------------------
 start_time = datetime(2025, 12, 24, 12, 0, 0, tzinfo=timezone.utc)
 seconds_active = max(0, (now_utc - start_time).total_seconds())
@@ -189,7 +223,7 @@ for m in range(0, minutes + 1, 10):
 s_lat, s_lon = (path[-1]["lat"], path[-1]["lon"]) if path else (0, 0)
 
 # -----------------------------
-# CITY LOOKUP
+# CITY LOOKUP (kid's city)
 # -----------------------------
 geo = geocode_city(city_input) if city_input else None
 if geo is None:
@@ -205,9 +239,38 @@ dist_km = np.sqrt((target_lat - s_lat) ** 2 + (target_lon - s_lon) ** 2) * 111
 close_enough = dist_km <= 1.0
 
 # -----------------------------
+# VISITED CITIES (based on UTC time)
+# -----------------------------
+def city_label(city):
+    return city["pt"] if lang == "pt-BR" else city["en"]
+
+visited = []
+for c in SANTA_CITIES:
+    if now_utc.hour > c["hour_utc"] or (now_utc.hour == c["hour_utc"] and now_utc.minute >= 0):
+        visited.append({
+            "name": city_label(c),
+            "lat": c["lat"],
+            "lon": c["lon"],
+            "hour_utc": c["hour_utc"],
+        })
+
+df_visited = pd.DataFrame(visited)
+
+# Unlock sound + toast when a new city appears
+visited_count = len(visited)
+if visited_count > st.session_state.last_visited_count:
+    # New city unlocked!
+    new_city_name = visited[-1]["name"] if visited else None
+    st.session_state.last_visited_count = visited_count
+    if new_city_name:
+        st.toast(t["unlock_toast"].format(city=new_city_name))
+        if sound_on:
+            play_sound(UNLOCK_URL)
+
+# -----------------------------
 # SIGNAL: HOURLY PING (ONCE PER HOUR)
 # -----------------------------
-hour_key = now_dus.strftime("%Y-%m-%d %H")  # Düsseldorf hour key
+hour_key = now_dus.strftime("%Y-%m-%d %H")
 is_top_of_hour = (now_dus.minute == 0)
 
 if is_top_of_hour and st.session_state.last_hour_ping != hour_key:
@@ -218,8 +281,6 @@ if is_top_of_hour and st.session_state.last_hour_ping != hour_key:
 
 # -----------------------------
 # SIGNAL: MIDNIGHT EVENT (ONCE PER MIDNIGHT MINUTE)
-# - If windy: show delay message
-# - If close (<=1km): beep + balloons
 # -----------------------------
 if not is_midnight_minute:
     st.session_state.midnight_event_done = False
@@ -227,7 +288,6 @@ if not is_midnight_minute:
 if is_midnight_minute and not st.session_state.midnight_event_done:
     st.session_state.midnight_event_done = True
 
-    # Always show something at midnight
     if is_delayed:
         st.warning(t["midnight_delay"])
 
@@ -235,7 +295,6 @@ if is_midnight_minute and not st.session_state.midnight_event_done:
         st.error(t["midnight_close"])
         st.balloons()
         if sound_on:
-            # quick beeps
             play_sound(BEEP_URL)
             play_sound(BEEP_URL)
             play_sound(BEEP_URL)
@@ -252,6 +311,13 @@ m2.metric(t["speed"], f"{current_speed:,} km/h", delta=t["delay_delta"] if is_de
 m3.metric(t["distance"], f"{dist_km:,.2f} km")
 m4.metric(t["wind_metric"], f"{wind_speed} km/h")
 
+# Progress bar (visited cities)
+st.subheader(t["progress"])
+total_cities = len(SANTA_CITIES)
+progress = 0 if total_cities == 0 else visited_count / total_cities
+st.progress(progress)
+st.write(f"**{visited_count} / {total_cities}**")
+
 st.info(t["webgl_tip"])
 
 # -----------------------------
@@ -263,29 +329,50 @@ with col_map:
     df_path = pd.DataFrame(path) if path else pd.DataFrame([{"lon": 0, "lat": 0}])
     df_city = pd.DataFrame([{"lon": target_lon, "lat": target_lat, "name": city_input or "Your City"}])
 
-    layer_path = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_path,
-        get_position="[lon, lat]",
-        get_color=[0, 255, 65],
-        get_radius=250000,
-        pickable=False,
+    layers = []
+
+    # Santa path
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=df_path,
+            get_position="[lon, lat]",
+            get_color=[0, 255, 65],
+            get_radius=250000,
+            pickable=False,
+        )
     )
 
-    layer_city = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_city,
-        get_position="[lon, lat]",
-        get_color=[0, 150, 255],
-        get_radius=380000,
-        pickable=True,
+    # Your city marker
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=df_city,
+            get_position="[lon, lat]",
+            get_color=[0, 150, 255],
+            get_radius=380000,
+            pickable=True,
+        )
     )
+
+    # Visited cities markers (green)
+    if not df_visited.empty:
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=df_visited,
+                get_position="[lon, lat]",
+                get_color=[0, 255, 120],
+                get_radius=320000,
+                pickable=True,
+            )
+        )
 
     deck = pdk.Deck(
         map_style=CARTO_DARK,
         map_provider="carto",
         initial_view_state=pdk.ViewState(latitude=s_lat, longitude=s_lon, zoom=1.6),
-        layers=[layer_path, layer_city],
+        layers=layers,
         tooltip={"text": "{name}"},
     )
     st.pydeck_chart(deck, use_container_width=True, height=650)
@@ -306,6 +393,15 @@ with col_log:
             st.write(f"✅ **{city}**: Cleared at {time_str}")
         else:
             st.write(f"⏳ **{city}**: Pending...")
+
+    st.divider()
+    st.subheader(t["visited_title"])
+    if df_visited.empty:
+        st.write(t["visited_none"])
+    else:
+        # show newest first
+        for name in list(df_visited["name"])[::-1]:
+            st.write(f"🟢 {name}")
 
     st.divider()
     st.write(f"**{t['signals']}**")
