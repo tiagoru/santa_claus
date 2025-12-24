@@ -1,6 +1,6 @@
 streamlit
-streamlit-autorefresh
-streamlit-geolocation
-pydeck
 pandas
 numpy
+pydeck
+streamlit-autorefresh
+geopy
