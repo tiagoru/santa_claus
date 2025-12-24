@@ -1,9 +1,10 @@
-# Santa Radar HQ (v2.5) — FULL FIXED VERSION
-# ✅ Any city in the world (geopy)
+# Santa Radar HQ (v2.6) — FULL VERSION (Fix: map_provider so basemap always shows)
+# ✅ Any city worldwide (geopy)
 # ✅ Infrared looks infrared (heat glow overlay)
-# ✅ Satellite view shows labels/borders (satellite-streets) when Mapbox token exists
+# ✅ Satellite view shows borders/labels when Mapbox token exists
 # ✅ ALWAYS shows a world map even WITHOUT Mapbox token (CARTO fallback)
 # ✅ PT-BR / English toggle
+# ✅ FIXED: map_provider="carto" for CARTO styles (prevents blank basemap)
 #
 # requirements.txt (Streamlit Cloud):
 # streamlit
@@ -27,7 +28,7 @@ from streamlit_autorefresh import st_autorefresh
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 
 # -----------------------------
 # AUTO-REFRESH + PAGE
@@ -87,6 +88,7 @@ STR = {
         "infra_glow": "🔥 Infrared Glow Strength",
         "labels": "🗺️ Show country labels",
         "sat_need_token": "🛰️ Satellite imagery needs a Mapbox token. Showing world map instead.",
+        "webgl_tip": "If the map is still blank, the device/browser may have WebGL disabled.",
     },
     "pt-BR": {
         "title": "🚀 Comando de Voo do Papai Noel",
@@ -116,6 +118,7 @@ STR = {
         "infra_glow": "🔥 Força do Brilho Infravermelho",
         "labels": "🗺️ Mostrar nomes de países",
         "sat_need_token": "🛰️ Imagem de satélite precisa de token Mapbox. Mostrando mapa-múndi.",
+        "webgl_tip": "Se o mapa ainda ficar branco, o navegador pode estar com WebGL desativado.",
     },
 }
 
@@ -130,7 +133,7 @@ def play_sound(url: str):
 # -----------------------------
 @st.cache_data(ttl=60 * 60)
 def geocode_city(city_text: str):
-    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app_v25")
+    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app_v26")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
     loc = geocode(city_text)
     if not loc:
@@ -236,21 +239,6 @@ with st.sidebar:
         glow = st.slider(T["infra_glow"], 0.6, 2.5, 1.2, 0.1)
 
 # -----------------------------
-# MAP STYLE (ALWAYS SHOW WORLD MAP)
-# -----------------------------
-if vision == "Satellite View":
-    if MAPBOX_TOKEN:
-        map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
-    else:
-        map_style = CARTO_LIGHT
-        st.warning(T["sat_need_token"])
-elif vision == "Infrared Heat":
-    # dark base helps infrared glow pop; CARTO is safe fallback
-    map_style = "mapbox://styles/mapbox/dark-v11" if MAPBOX_TOKEN else CARTO_DARK
-else:
-    map_style = "mapbox://styles/mapbox/dark-v11" if MAPBOX_TOKEN else CARTO_DARK
-
-# -----------------------------
 # CITY LOOKUP
 # -----------------------------
 geo = geocode_city(city_input) if city_input else None
@@ -307,6 +295,28 @@ m1.metric(T["presents"], f"{presents:,}")
 m2.metric(T["speed"], f"{current_speed:,} km/h", delta=T["wind_delay"] if is_delayed else T["stable"])
 m3.metric(T["distance"], f"{dist_km_seat:,.1f} km")
 m4.metric(T["wind_metric"], f"{wind_speed} km/h")
+
+# Helpful hint if basemap missing
+if not MAPBOX_TOKEN:
+    st.info(T["webgl_tip"])
+
+# -----------------------------
+# MAP PROVIDER + MAP STYLE (THE KEY FIX)
+# -----------------------------
+use_mapbox = bool(MAPBOX_TOKEN)
+
+if vision == "Satellite View" and use_mapbox:
+    map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
+    map_provider = "mapbox"
+elif use_mapbox:
+    map_style = "mapbox://styles/mapbox/dark-v11"
+    map_provider = "mapbox"
+else:
+    # IMPORTANT: CARTO styles must use carto provider
+    map_style = CARTO_LIGHT if vision == "Satellite View" else CARTO_DARK
+    map_provider = "carto"
+    if vision == "Satellite View":
+        st.warning(T["sat_need_token"])
 
 # -----------------------------
 # MAP + LOG
@@ -388,14 +398,14 @@ with col_map:
             )
         )
 
-    st.pydeck_chart(
-        pdk.Deck(
-            map_style=map_style,
-            initial_view_state=pdk.ViewState(latitude=s_lat, longitude=s_lon, zoom=1.5),
-            layers=layers,
-            tooltip={"text": "{name}"},
-        )
+    deck = pdk.Deck(
+        map_style=map_style,
+        map_provider=map_provider,  # ✅ THIS FIXES BLANK BASEMAP WITH CARTO
+        initial_view_state=pdk.ViewState(latitude=s_lat, longitude=s_lon, zoom=1.5),
+        layers=layers,
+        tooltip={"text": "{name}"},
     )
+    st.pydeck_chart(deck, use_container_width=True, height=650)
 
 with col_log:
     st.subheader(T["sector"])
@@ -419,3 +429,4 @@ with col_log:
         st.warning(T["note_delay"])
     else:
         st.success(T["systems_ok"])
+
