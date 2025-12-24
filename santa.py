@@ -9,6 +9,35 @@
 #
 # Streamlit Cloud (Secrets) recommended for Mapbox styles:
 # MAPBOX_API_KEY="YOUR_MAPBOX_TOKEN"
+import os
+
+# --- Map token + safe fallback basemap ---
+MAPBOX_TOKEN = None
+if "MAPBOX_API_KEY" in st.secrets:
+    MAPBOX_TOKEN = st.secrets["MAPBOX_API_KEY"]
+elif os.environ.get("MAPBOX_API_KEY"):
+    MAPBOX_TOKEN = os.environ["MAPBOX_API_KEY"]
+
+if MAPBOX_TOKEN:
+    pdk.settings.mapbox_api_key = MAPBOX_TOKEN
+
+# Free basemap style (no token needed)
+CARTO_POSITRON = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+CARTO_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+
+# Choose styles
+if vision == "Satellite View":
+    if MAPBOX_TOKEN:
+        # satellite with labels
+        map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
+    else:
+        # no token -> fallback to free map (can't do satellite)
+        map_style = CARTO_POSITRON
+        st.warning("Satellite basemap needs a Mapbox token. Showing a free world map instead.")
+elif vision == "Infrared Heat":
+    map_style = CARTO_DARK if not MAPBOX_TOKEN else "mapbox://styles/mapbox/dark-v11"
+else:
+    map_style = CARTO_DARK if not MAPBOX_TOKEN else "mapbox://styles/mapbox/dark-v11"
 
 import streamlit as st
 import pandas as pd
