@@ -5,107 +5,107 @@ import pydeck as pdk
 from datetime import datetime, timezone
 from streamlit_autorefresh import st_autorefresh
 
-# --- Auto-Refresh (Updates every 60 seconds) ---
-st_autorefresh(interval=60000, key="santatracker")
+# --- 1. AUTO-REFRESH (Updates numbers & map every 60s) ---
+st_autorefresh(interval=60000, key="santa_heartbeat")
 
-# --- Setup ---
 st.set_page_config(page_title="Santa Radar HQ", layout="wide")
 
-# --- Sidebar Controls ---
+# --- 2. SIDEBAR & SPECTRUM LOGIC ---
 with st.sidebar:
-    st.header("📡 Sensor Calibration")
+    st.header("📡 Radar Spectrum")
     vision = st.selectbox(
         "Select Vision Mode", 
-        ["Night Vision", "Infrared Heat", "Satellite View", "Standard Radar"]
+        ["Tactical Night Vision", "Infrared Heat", "Satellite View", "Standard Radar"]
     )
     
-    # Map Tiles & Color Logic
-    if vision == "Night Vision":
-        map_style = "mapbox://styles/mapbox/dark-v10"
-        path_color = [0, 255, 65, 200] # Matrix Green
+    # We use simpler map_style names that PyDeck always recognizes
+    if vision == "Tactical Night Vision":
+        map_bg = "dark"
+        dot_color = [0, 255, 65, 200] # Matrix Green
     elif vision == "Infrared Heat":
-        map_style = "mapbox://styles/mapbox/navigation-night-v1"
-        path_color = [255, 69, 0, 220] # Heat Orange
+        map_bg = "road" # High contrast
+        dot_color = [255, 69, 0, 220] # Heat Orange
     elif vision == "Satellite View":
-        map_style = "mapbox://styles/mapbox/satellite-v9"
-        path_color = [255, 255, 255, 250] # Bright White
+        map_bg = "satellite"
+        dot_color = [255, 255, 255, 250] # White
     else:
-        map_style = "mapbox://styles/mapbox/light-v10"
-        path_color = [255, 0, 0, 200] # Standard Red
+        map_bg = "light"
+        dot_color = [255, 0, 0, 200] # Red
 
     st.divider()
-    # Christmas Spirit Calculation
+    # Spirit Gauge
     now_utc = datetime.now(timezone.utc)
-    spirit = 35 + (60 * (now_utc.hour / 24))
+    day_progress = (now_utc.hour * 3600 + now_utc.minute * 60) / 86400
+    spirit = 35 + (60 * day_progress)
     st.write(f"✨ **Christmas Spirit Level**")
     st.progress(min(spirit/100, 1.0))
-    st.write(f"Current Signal: **{spirit:.1f}%**")
+    st.write(f"Power: {spirit:.1f}%")
 
-# --- Data Logic ---
+# --- 3. TELEMETRY LOGIC ---
 start_time = datetime(2025, 12, 24, 12, 0, 0, tzinfo=timezone.utc)
-seconds_since_start = (now_utc - start_time).total_seconds()
+seconds_active = (now_utc - start_time).total_seconds()
 
-# Counters
-presents = int(max(0, seconds_since_start * 150000))
-speed = 24500 + np.random.randint(-500, 500) if seconds_since_start > 0 else 0
+if seconds_active > 0:
+    presents = int(seconds_active * 150000) # 150k gifts per second
+    speed = 24500 + np.random.randint(-300, 300) # Mach 20
+else:
+    presents, speed = 0, 0
 
-# Path Building
-def get_flight_data():
-    minutes = int(max(0, seconds_since_start / 60))
+# --- 4. MAP DATA ---
+def get_santa_path():
+    minutes = int(max(0, seconds_active / 60))
     path = []
-    for m in range(0, minutes + 1, 5):
+    # Create breadcrumb trail (one dot every 10 mins)
+    for m in range(0, minutes + 1, 10):
         p_lon = 180 - (m * 0.25)
         if p_lon < -180: p_lon += 360
         p_lat = 40 * np.sin(m * 0.01)
-        path.append({"lat": p_lat, "lon": p_lon})
+        path.append({"lon": p_lon, "lat": p_lat})
     
-    # Final location or North Pole
-    curr_lat = path[-1]['lat'] if path else 90
-    curr_lon = path[-1]['lon'] if path else 0
-    return path, curr_lat, curr_lon
+    # Current Position
+    c_lon = 180 - (minutes * 0.25)
+    if c_lon < -180: c_lon += 360
+    c_lat = 40 * np.sin(minutes * 0.01)
+    return path, c_lat, c_lon
 
-history, s_lat, s_lon = get_flight_data()
+history, s_lat, s_lon = get_santa_path()
 
-# --- Distance to Düsseldorf ---
+# Distance to Düsseldorf
 dist = np.sqrt((51.22 - s_lat)**2 + (6.77 - s_lon)**2) * 111
-if dist < 1.0: dist = 1.0
 
-# --- Dashboard Layout ---
-st.title(f"🌍 Santa Flight Command - {vision}")
+# --- 5. UI LAYOUT ---
+st.title(f"🌍 Santa Tracker: {vision}")
 
-# Top Metric Gauges
-m1, m2, m3 = st.columns(3)
-m1.metric("🎁 Presents Delivered", f"{presents:,}", delta="Auto-updating")
-m2.metric("🚀 Sleigh Speed", f"{speed:,} km/h", delta="Mach 20")
-m3.metric("📏 Distance to You", f"{dist:,.1f} km")
+# Top Row: Tracking Numbers
+c1, c2, c3 = st.columns(3)
+c1.metric("🎁 Presents Delivered", f"{presents:,}")
+c2.metric("🚀 Sleigh Speed", f"{speed:,} km/h")
+c3.metric("📏 Distance to You", f"{dist:,.1f} km")
 
-col1, col2 = st.columns([3, 1])
+# Main View
+col_map, col_log = st.columns([3, 1])
 
-with col1:
-    # High-tech Map
+with col_map:
+    # High-reliability PyDeck configuration
     st.pydeck_chart(pdk.Deck(
-        map_style=map_style,
+        map_style=map_bg,
         initial_view_state=pdk.ViewState(
-            latitude=s_lat, longitude=s_lon, zoom=1.8, pitch=35
+            latitude=s_lat, longitude=s_lon, zoom=1.5, pitch=0
         ),
         layers=[
             pdk.Layer(
                 "ScatterplotLayer",
                 data=pd.DataFrame(history),
                 get_position="[lon, lat]",
-                get_color=path_color,
+                get_color=dot_color,
                 get_radius=250000,
             ),
         ],
     ))
 
-with col2:
-    st.subheader("📝 Mission Log")
-    regions = ["North Pole", "Pacific Is.", "New Zealand", "Australia", "Japan", "Asia"]
-    visited = regions[:int(min(len(regions), max(1, seconds_since_start // 3600)))]
-    for place in reversed(visited):
-        st.write(f"✅ **{place}** - Cleared")
-    
-    st.divider()
-    if st.button("🔔 Test Chimney Sensor"):
-        st.snow()
+with col_log:
+    st.subheader("📝 Past Locations Log")
+    regions = ["North Pole", "Fiji", "New Zealand", "Australia", "Japan", "Asia"]
+    visited_idx = int(min(len(regions), max(1, seconds_active // 3600)))
+    for place in reversed(regions[:visited_idx]):
+        st.write(f"✅ {place} - **CLEARED**")
