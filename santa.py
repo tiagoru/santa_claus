@@ -1,7 +1,3 @@
-# Santa Radar HQ — Kid Edition (Choose Your Seat + Enter Your City + Distance)
-# Requirements:
-#   pip install streamlit pandas numpy pydeck streamlit-autorefresh geopy
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,54 +5,29 @@ import pydeck as pdk
 from datetime import datetime, timezone, timedelta
 from streamlit_autorefresh import st_autorefresh
 
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
-
 # -----------------------------
-# 1) AUTO-REFRESH (Every 30s)
+# AUTO REFRESH
 # -----------------------------
 st_autorefresh(interval=30000, key="santa_heartbeat")
-
 st.set_page_config(page_title="Santa Radar HQ", layout="wide")
 
 # -----------------------------
-# 2) SESSION STATE
-# -----------------------------
-if "sound_on" not in st.session_state:
-    st.session_state.sound_on = True
-
-# -----------------------------
-# 3) WIND & DELAY LOGIC
+# WIND & TIME
 # -----------------------------
 now_utc = datetime.now(timezone.utc)
-wind_speed = 45 + np.random.randint(-15, 60)  # random-ish wind
-is_delayed = wind_speed > 85                  # threshold for wind delay
+wind_speed = 45 + np.random.randint(-15, 60)
+is_delayed = wind_speed > 85
 
 # -----------------------------
-# 4) AUDIO LOGIC
+# SIDEBAR
 # -----------------------------
-def play_sound(url: str):
-    if st.session_state.sound_on:
-        md = f'<audio autoplay><source src="{url}" type="audio/mp3"></audio>'
-        st.markdown(md, unsafe_allow_html=True)
-
-# Düsseldorf Midnight Check (UTC+1)
-now_dus = now_utc + timedelta(hours=1)
-is_midnight = (now_dus.hour == 0 and now_dus.minute == 0)
-
-# -----------------------------
-# 5) SIDEBAR (VISION + SOUND + SEAT + CITY INPUT)
-# -----------------------------
-SEATS = {
-    "🎄 Window Seat": 1.00,
-    "🦌 Reindeer View Seat": 0.98,   # tiny “bonus” for fun
-    "🎁 Present Bay Seat": 1.03,
-    "🕹️ Pilot Seat": 0.97,
-}
-
 with st.sidebar:
-    st.header("📡 Radar Spectrum")
-    vision = st.selectbox("Select Vision Mode", ["Tactical Night Vision", "Infrared Heat", "Satellite View"])
+    st.header("🎄 Santa Control Panel")
+
+    vision = st.selectbox(
+        "👀 Vision Mode",
+        ["Tactical Night Vision", "Infrared Heat", "Satellite View"]
+    )
 
     styles = {
         "Tactical Night Vision": {"bg": "dark", "color": [0, 255, 65]},
@@ -66,163 +37,132 @@ with st.sidebar:
     selected = styles[vision]
 
     st.divider()
-    st.session_state.sound_on = st.toggle("🔊 Sound", value=st.session_state.sound_on)
 
-    st.divider()
     st.subheader("💺 Choose your seat")
-    seat_name = st.radio("Pick a seat on the sleigh:", list(SEATS.keys()))
-    seat_multiplier = SEATS[seat_name]
+    seat = st.radio(
+        "Pick a seat:",
+        ["🎄 Window Seat", "🦌 Reindeer View", "🎁 Present Bay", "🕹️ Pilot Seat"]
+    )
 
     st.divider()
     st.subheader("📍 Enter your city")
-    city_text = st.text_input("Type a city (try: Berlin, Germany)", value="Düsseldorf")
+    city_input = st.text_input(
+        "Type your city (example: Berlin)",
+        value="Düsseldorf"
+    )
 
     st.divider()
-    st.write(f"💨 **Anemometer (Wind):** {wind_speed} km/h")
+    st.write(f"💨 **Wind:** {wind_speed} km/h")
     if is_delayed:
-        st.error("⚠️ HIGH WIND WARNING: Reindeer adjusting for heavy headwinds.")
+        st.error("⚠️ Wind delay – reindeer flying carefully!")
     else:
-        st.success("🌤️ CLEAR SKIES: Full speed ahead.")
+        st.success("✅ Clear skies!")
 
 # -----------------------------
-# 6) DATA & TELEMETRY
+# CITY DATABASE (SAFE + FAST)
 # -----------------------------
-# Journey Start: 12:00 UTC (International Date Line Midnight)
+CITY_DB = {
+    "düsseldorf": (51.22, 6.77),
+    "berlin": (52.52, 13.40),
+    "munich": (48.14, 11.58),
+    "hamburg": (53.55, 9.99),
+    "cologne": (50.94, 6.96),
+    "london": (51.51, -0.13),
+    "paris": (48.86, 2.35),
+    "new york": (40.71, -74.01),
+    "tokyo": (35.68, 139.69),
+    "sydney": (-33.86, 151.21),
+}
+
+city_key = city_input.strip().lower()
+
+if city_key in CITY_DB:
+    target_lat, target_lon = CITY_DB[city_key]
+    city_status = f"📍 Tracking **{city_input.title()}**"
+else:
+    target_lat, target_lon = 51.22, 6.77  # fallback Düsseldorf
+    city_status = "❌ City not found – using Düsseldorf"
+
+# -----------------------------
+# SANTA FLIGHT PATH
+# -----------------------------
 start_time = datetime(2025, 12, 24, 12, 0, 0, tzinfo=timezone.utc)
 seconds_active = max(0, (now_utc - start_time).total_seconds())
+minutes = int(seconds_active / 60)
 
-base_speed = 24500
-current_speed = (base_speed - (wind_speed * 10)) if is_delayed else base_speed + np.random.randint(-200, 200)
-presents = int(seconds_active * 150000)
-
-# -----------------------------
-# 7) SANTA PATH CALCULATION
-# -----------------------------
-minutes = int(max(0, seconds_active / 60))
 path = []
 for m in range(0, minutes + 1, 10):
-    p_lon = 180 - (m * 0.25)
-    if p_lon < -180:
-        p_lon += 360
-    p_lat = 40 * np.sin(m * 0.01)
-    path.append({"lon": p_lon, "lat": p_lat})
+    lon = 180 - (m * 0.25)
+    if lon < -180:
+        lon += 360
+    lat = 40 * np.sin(m * 0.01)
+    path.append({"lon": lon, "lat": lat})
 
-s_lat, s_lon = (path[-1]["lat"], path[-1]["lon"]) if path else (90, 0)
-
-# -----------------------------
-# 8) GEOCODE KID CITY -> COORDS (CACHED)
-# -----------------------------
-@st.cache_data(ttl=60 * 60)  # cache 1 hour
-def geocode_city(city: str):
-    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit")
-    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
-    loc = geocode(city)
-    if not loc:
-        return None
-    return loc.latitude, loc.longitude, loc.address
-
-geo = geocode_city(city_text.strip())
-
-if geo is None:
-    # fallback if the city can't be found
-    target_lat, target_lon = 51.22, 6.77
-    pretty_address = "Fallback: Düsseldorf (try adding country, like 'Paris, France')"
-    sidebar_city_status = ("error", "City not found. Try adding a country (e.g. 'Paris, France').")
-else:
-    target_lat, target_lon, pretty_address = geo
-    sidebar_city_status = ("success", f"Found: {pretty_address}")
-
-# Show geocode status in sidebar (after we compute it)
-with st.sidebar:
-    if sidebar_city_status[0] == "success":
-        st.success(sidebar_city_status[1])
-    else:
-        st.error(sidebar_city_status[1])
-
-# Distance (simple approx)
-dist_km = np.sqrt((target_lat - s_lat) ** 2 + (target_lon - s_lon) ** 2) * 111
-
-# Optional: “seat multiplier” (just for fun)
-dist_km_seat = dist_km * seat_multiplier
+s_lat, s_lon = path[-1]["lat"], path[-1]["lon"]
 
 # -----------------------------
-# 9) UI & ALERTS
+# DISTANCE CALCULATION
 # -----------------------------
-st.title(f"🚀 Santa Flight Command: {vision}")
-
-if is_midnight:
-    st.error("🎊 MERRY CHRISTMAS! SANTA HAS ARRIVED IN DÜSSELDORF!")
-    play_sound("https://www.soundjay.com/holiday/sounds/sleigh-bells-7.mp3")
-    st.balloons()
-
-# Top Gauges
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("🎁 Presents Delivered", f"{presents:,}")
-m2.metric("🚀 Sleigh Speed", f"{current_speed:,} km/h", delta="Wind Delay" if is_delayed else "Stable")
-m3.metric("📏 Distance to You", f"{dist_km_seat:,.1f} km")
-m4.metric("💨 Current Wind", f"{wind_speed} km/h")
-
-st.caption(f"📍 Your city: **{city_text}** • 💺 Seat: **{seat_name}**")
+distance_km = np.sqrt((target_lat - s_lat) ** 2 + (target_lon - s_lon) ** 2) * 111
 
 # -----------------------------
-# 10) MAP + LOG
+# UI HEADER
 # -----------------------------
-col_map, col_log = st.columns([3, 1])
+st.title("🛷 Santa Radar HQ")
+st.subheader(city_status)
 
-with col_map:
-    df_path = pd.DataFrame(path)
-    df_city = pd.DataFrame([{"lon": target_lon, "lat": target_lat, "name": city_text.strip() or "Your City"}])
+# -----------------------------
+# METRICS
+# -----------------------------
+m1, m2, m3 = st.columns(3)
 
-    layer_path = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_path,
-        get_position="[lon, lat]",
-        get_color=selected["color"],
-        get_radius=250000,
-        pickable=False,
-    )
+m1.metric("🎁 Presents Delivered", f"{int(seconds_active * 150000):,}")
+m2.metric("🚀 Sleigh Speed", "24,500 km/h" if not is_delayed else "22,000 km/h")
+m3.metric("📏 Distance to You", f"{distance_km:,.1f} km")
 
-    layer_city = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_city,
-        get_position="[lon, lat]",
-        get_color=[0, 150, 255],
-        get_radius=380000,
-        pickable=True,
-    )
+st.caption(f"💺 Seat: **{seat}**")
 
-    deck = pdk.Deck(
+# -----------------------------
+# MAP
+# -----------------------------
+df_path = pd.DataFrame(path)
+df_city = pd.DataFrame([{"lon": target_lon, "lat": target_lat, "name": city_input.title()}])
+
+layer_path = pdk.Layer(
+    "ScatterplotLayer",
+    data=df_path,
+    get_position="[lon, lat]",
+    get_color=selected["color"],
+    get_radius=250000,
+)
+
+layer_city = pdk.Layer(
+    "ScatterplotLayer",
+    data=df_city,
+    get_position="[lon, lat]",
+    get_color=[0, 150, 255],
+    get_radius=350000,
+)
+
+st.pydeck_chart(
+    pdk.Deck(
         map_style=selected["bg"],
-        initial_view_state=pdk.ViewState(latitude=s_lat, longitude=s_lon, zoom=1.5),
+        initial_view_state=pdk.ViewState(
+            latitude=s_lat,
+            longitude=s_lon,
+            zoom=1.5,
+        ),
         layers=[layer_path, layer_city],
         tooltip={"text": "{name}"},
     )
+)
 
-    st.pydeck_chart(deck)
-
-with col_log:
-    st.subheader("📝 Sector Clearance")
-
-    # Real World Cities Santa has cleared today (simple timeline)
-    regions = [
-        ("Fiji", "12:00 UTC"),
-        ("Auckland", "13:00 UTC"),
-        ("Sydney", "14:00 UTC"),
-        ("Tokyo", "15:00 UTC"),
-        ("Beijing", "16:00 UTC"),
-    ]
-
-    for city, time_str in regions:
-        hour_val = int(time_str.split(":")[0])
-        if now_utc.hour >= hour_val:
-            st.write(f"✅ **{city}**: Cleared at {time_str}")
-        else:
-            st.write(f"⏳ **{city}**: Pending...")
-
-    st.divider()
-    st.subheader("🛰️ Sleigh Notes")
-    st.write(f"🧭 Target lock: **{pretty_address}**")
-    if is_delayed:
-        st.warning("⚠️ Sleigh reporting a small delay due to jet stream turbulence.")
-    else:
-        st.success("✅ Navigation stable. Sleigh cruising normally.")
+# -----------------------------
+# FUN MESSAGE
+# -----------------------------
+if distance_km < 2000:
+    st.success("🎅 Santa is very close to you!")
+elif distance_km < 6000:
+    st.info("🔔 Santa is on your continent!")
+else:
+    st.info("🧭 Santa is flying across the world!")
