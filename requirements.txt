@@ -1,2 +1,6 @@
 streamlit
+streamlit-autorefresh
 streamlit-geolocation
+pydeck
+pandas
+numpy
