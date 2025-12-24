@@ -5,89 +5,104 @@ import time
 from datetime import datetime, timezone
 
 # --- Setup ---
-st.set_page_config(page_title="Santa Radar HQ", layout="wide")
+st.set_page_config(page_title="NORAD Santa Command", layout="wide", page_icon="🎯")
 
-# --- Interactive Sidebar ---
+# --- Custom Styles ---
+st.markdown("""
+    <style>
+    .stMetric { background-color: #0e1117; border: 1px solid #333; padding: 10px; border-radius: 5px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- Sidebar: The Radar Station ---
 with st.sidebar:
-    st.header("📡 Command Console")
+    st.header("🎯 Sector Control")
     
-    # 1. Radar Dial Simulation
-    st.subheader("Radar Sweep Angle")
-    # This creates a "moving" dial effect
-    angle = (datetime.now().second * 6) # 360 degrees over 60 seconds
-    st.write(f"🧭 Bearing: **{angle}°**")
-    st.progress(datetime.now().second / 60) # Visual sweep bar
+    # Live Radar Dial Emoji logic
+    radar_chars = ["🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"]
+    radar_idx = datetime.now().second % 12
+    st.title(f" {radar_chars[radar_idx]} RADAR ACTIVE")
     
     st.divider()
     
-    # 2. Radar Modes (Now affects the Map!)
-    radar_mode = st.radio(
-        "Select Tracking Spectrum", 
-        ["Standard Satellite", "Rudolph-Vision (Infrared)", "Magic Quantum Wave"]
+    # Vision Modes
+    vision = st.radio(
+        "Switch Vision Spectrum",
+        ["Night Vision", "Heat Seeker", "Magic Pulse", "Classic Radar"]
     )
     
-    # Map colors and sizes based on mode
-    if radar_mode == "Standard Satellite":
-        map_color = "#00FF00" # Classic Green
-        point_size = 30
-    elif radar_mode == "Rudolph-Vision (Infrared)":
-        map_color = "#FF4B4B" # Heat Map Red
-        point_size = 60
+    # Configure Map Styles based on Vision
+    if vision == "Night Vision":
+        map_color = "#00FF41" # Matrix Green
+        point_size = 40
+        status_msg = "🟢 LOW LIGHT ENHANCEMENT ACTIVE"
+    elif vision == "Heat Seeker":
+        map_color = "#FF4500" # Glowing Orange
+        point_size = 70
+        status_msg = "🔴 INFRARED HEAT SIGNATURE DETECTED"
+    elif vision == "Magic Pulse":
+        map_color = "#9D00FF" # Purple Magic
+        point_size = 110
+        status_msg = "🔮 DETECTING HIGH MAGIC CONCENTRATIONS"
     else:
-        map_color = "#7F00FF" # Magic Purple
-        point_size = 100
+        map_color = "#FFFFFF" # White
+        point_size = 30
+        status_msg = "⚪ STANDARD SATELLITE LINK"
 
-    st.divider()
-    if st.button("🔄 Full System Reboot"):
-        st.toast("Rebooting North Pole Servers...")
-        time.sleep(1)
-        st.rerun()
+    st.info(status_msg)
 
-# --- Santa Location Logic ---
+# --- Tracking Logic (NORAD Accurate) ---
 now = datetime.now(timezone.utc)
+# 13:36 CET is roughly 12:36 UTC.
+# Santa is currently moving across Asia/Europe area!
 total_hours_utc = now.hour + (now.minute / 60) + (now.second / 3600)
 
-# Calculate Santa (Longitude based on Earth's rotation)
+# Calculate Santa's Current Position
 current_lon = 180 - (total_hours_utc * 15)
 if current_lon < -180: current_lon += 360
-current_lat = 35 * np.sin(total_hours_utc * 0.2)
+current_lat = 45 * np.sin(total_hours_utc * 0.3) # Simulated flight curves
 
-# Calculate History Trail
-path_data = []
-for i in range(15):
+# Create "Breadcrumb" Path (The last 24 hours of flight)
+path_points = []
+for i in range(48): # 48 pings (every 30 mins)
     p_hours = total_hours_utc - (i * 0.5)
     p_lon = 180 - (p_hours * 15)
     if p_lon < -180: p_lon += 360
-    p_lat = 35 * np.sin(p_hours * 0.2)
-    path_data.append({"lat": p_lat, "lon": p_lon, "Signal": "Past Ping"})
+    p_lat = 45 * np.sin(p_hours * 0.3)
+    path_points.append({"lat": p_lat, "lon": p_lon, "Size": 10 if i > 0 else 50})
+
+# Prepare Data
+df_path = pd.DataFrame(path_points)
 
 # --- Main Dashboard ---
-st.title(f"🛰️ Santa Radar: {radar_mode} Mode")
+st.title("🛰️ NORAD SANTA TRACKING SYSTEM")
 
-col1, col2 = st.columns([3, 1])
+col1, col2 = st.columns([4, 1])
 
 with col1:
-    # Build Map Data
-    df_path = pd.DataFrame(path_data)
-    df_santa = pd.DataFrame([{"lat": current_lat, "lon": current_lon, "Signal": "SANTA"}])
-    full_df = pd.concat([df_path, df_santa])
-    
-    # The Map now uses the 'map_color' and 'point_size' from the Radar Mode selection
-    st.map(full_df, color=map_color, size=point_size)
+    # High-Contrast Map
+    st.map(df_path, color=map_color, size="Size")
     
 with col2:
-    st.markdown("### 🔍 Scan Details")
-    st.write(f"**Target:** Kris Kringle")
-    st.write(f"**Altitude:** 30,000 ft")
-    st.write(f"**Spectrum:** {radar_mode}")
+    st.subheader("📊 Telemetry")
+    st.metric("Latitude", f"{current_lat:.2f} N")
+    st.metric("Longitude", f"{current_lon:.2f} E")
+    st.metric("Altitude", "42,000 ft")
+    st.metric("Speed", "Mach 12")
     
-    # Distance Logic
-    st.metric("Signal Strength", f"{90 + np.random.randint(1,10)}%", delta="Strong")
-    
-    if st.button("🔊 Ping Sleigh"):
-        st.write("📢 *Beep... Beep... Ho Ho Ho!*")
-        st.balloons()
+    if st.button("📡 PING SLIEGH"):
+        st.snow()
+        st.success("Sleigh Response: 'Ho Ho Ho!'")
 
-# --- Bottom Status Bar ---
+# --- Interactive Log ---
 st.divider()
-st.markdown(f"**System Log [{now.strftime('%H:%M:%S')} UTC]:** Scanning Sector {int(current_lon)}... Santa is currently over a snowy region!")
+st.subheader("📝 Live Intelligence Log")
+log_col1, log_col2 = st.columns(2)
+
+with log_col1:
+    st.write(f"**[{now.strftime('%H:%M:%S')}]** Satellite lock confirmed on Sector 7G.")
+    st.write(f"**[{now.strftime('%H:%M:%S')}]** Fueling reindeer with magic oats.")
+
+with log_col2:
+    st.write(f"**[{now.strftime('%H:%M:%S')}]** {vision} is scanning for chimneys.")
+    st.write(f"**[{now.strftime('%H:%M:%S')}]** Estimated presents delivered: {int(total_hours_utc * 100000000):,}")
