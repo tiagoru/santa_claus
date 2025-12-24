@@ -5,6 +5,9 @@ import pydeck as pdk
 from datetime import datetime, timezone, timedelta
 from streamlit_autorefresh import st_autorefresh
 
+from geopy.geocoders import Nominatim
+from geopy.extra.rate_limiter import RateLimiter
+
 # --- 1. AUTO-REFRESH (Every 30s) ---
 st_autorefresh(interval=30000, key="santa_heartbeat")
 st.set_page_config(page_title="Santa Radar HQ", layout="wide")
@@ -23,37 +26,25 @@ def play_sound(url):
 now_dus = now_utc + timedelta(hours=1)
 is_midnight = now_dus.hour == 0 and now_dus.minute == 0
 
-# --- 4. CITY DATABASE (NO EXTRA LIBS) ---
-# Kids can type a city, we match it here.
-# Add more cities anytime!
-CITY_DB = {
-    "düsseldorf": (51.22, 6.77),
-    "duesseldorf": (51.22, 6.77),
-    "berlin": (52.52, 13.40),
-    "hamburg": (53.55, 9.99),
-    "munich": (48.14, 11.58),
-    "münchen": (48.14, 11.58),
-    "cologne": (50.94, 6.96),
-    "köln": (50.94, 6.96),
-    "frankfurt": (50.11, 8.68),
-    "stuttgart": (48.78, 9.18),
-    "paris": (48.86, 2.35),
-    "london": (51.51, -0.13),
-    "madrid": (40.42, -3.70),
-    "rome": (41.90, 12.50),
-    "vienna": (48.21, 16.37),
-    "wien": (48.21, 16.37),
-    "zurich": (47.37, 8.54),
-    "zürich": (47.37, 8.54),
-    "new york": (40.71, -74.01),
-    "los angeles": (34.05, -118.24),
-    "tokyo": (35.68, 139.69),
-    "beijing": (39.90, 116.41),
-    "sydney": (-33.86, 151.21),
-    "auckland": (-36.85, 174.76),
-}
+# --- 4. GEOCODING (ANY CITY IN THE WORLD) ---
+@st.cache_data(ttl=60 * 60)  # cache results for 1 hour
+def geocode_city(city_text: str):
+    # Nominatim requires a unique user_agent string
+    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app")
+    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
+    loc = geocode(city_text)
+    if not loc:
+        return None
+    return loc.latitude, loc.longitude, loc.address
 
 # --- 5. SIDEBAR & VISUALS ---
+SEATS = {
+    "🎄 Window Seat": 1.00,
+    "🦌 Reindeer View": 0.98,      # tiny “bonus” just for fun
+    "🎁 Present Bay": 1.03,
+    "🕹️ Pilot Seat": 0.97,
+}
+
 with st.sidebar:
     st.header("📡 Radar Spectrum")
     vision = st.selectbox("Select Vision Mode", ["Tactical Night Vision", "Infrared Heat", "Satellite View"])
@@ -61,52 +52,35 @@ with st.sidebar:
     styles = {
         "Tactical Night Vision": {"bg": "dark", "color": [0, 255, 65]},
         "Infrared Heat": {"bg": "road", "color": [255, 69, 0]},
-        "Satellite View": {"bg": "satellite", "color": [255, 255, 255]},
+        "Satellite View": {"bg": "satellite", "color": [255, 255, 255]}
     }
     selected = styles[vision]
 
     st.divider()
-
-    # NEW: Seat select
     st.subheader("💺 Choose your seat")
-    SEATS = {
-        "🎄 Window Seat": 1.00,
-        "🦌 Reindeer View": 0.98,      # tiny “fun bonus”
-        "🎁 Present Bay": 1.03,
-        "🕹️ Pilot Seat": 0.97,
-    }
-    seat_name = st.radio("Pick one:", list(SEATS.keys()), index=0)
+    seat_name = st.radio("Pick a sleigh seat:", list(SEATS.keys()), index=0)
     seat_multiplier = SEATS[seat_name]
 
     st.divider()
-
-    # NEW: City input
-    st.subheader("📍 Enter your city")
-    city_input = st.text_input("Example: Berlin (or Düsseldorf)", value="Düsseldorf")
-    city_key = city_input.strip().lower()
+    st.subheader("📍 Enter your city (anywhere!)")
+    city_input = st.text_input(
+        "Try: 'Düsseldorf', 'Paris, France', 'New York', 'Tokyo'",
+        value="Düsseldorf"
+    ).strip()
 
     st.divider()
-
     st.write(f"💨 **Anemometer (Wind):** {wind_speed} km/h")
     if is_delayed:
         st.error("⚠️ HIGH WIND WARNING: Reindeer adjusting for heavy headwinds.")
     else:
         st.success("🌤️ CLEAR SKIES: Full speed ahead.")
 
-# Pick target coords from CITY_DB (fallback Düsseldorf)
-if city_key in CITY_DB:
-    target_lat, target_lon = CITY_DB[city_key]
-    city_status = f"✅ Tracking: {city_input}"
-else:
-    target_lat, target_lon = CITY_DB["düsseldorf"]
-    city_status = "❌ City not found — using Düsseldorf (try a bigger city name)."
-
 # --- 6. DATA & TELEMETRY ---
+# Journey Start: 12:00 UTC (International Date Line Midnight)
 start_time = datetime(2025, 12, 24, 12, 0, 0, tzinfo=timezone.utc)
-seconds_active = (now_utc - start_time).total_seconds()
-seconds_active = max(0, seconds_active)
+seconds_active = max(0, (now_utc - start_time).total_seconds())
 
-# Speed penalty if high wind
+# Apply a speed penalty if there is high wind
 base_speed = 24500
 current_speed = (base_speed - (wind_speed * 10)) if is_delayed else base_speed + np.random.randint(-200, 200)
 presents = int(max(0, seconds_active * 150000))
@@ -121,15 +95,27 @@ for m in range(0, minutes + 1, 10):
     p_lat = 40 * np.sin(m * 0.01)
     path.append({"lon": p_lon, "lat": p_lat})
 
-s_lat, s_lon = (path[-1]["lat"], path[-1]["lon"]) if path else (90, 0)
+s_lat, s_lon = (path[-1]['lat'], path[-1]['lon']) if path else (90, 0)
 
-# Distance to chosen city (simple approx: degrees->km)
-dist_km = np.sqrt((target_lat - s_lat) ** 2 + (target_lon - s_lon) ** 2) * 111
+# --- 7. CITY LOOKUP ---
+geo = geocode_city(city_input) if city_input else None
 
-# Apply seat multiplier (purely for fun)
+# Fallback if not found (Düsseldorf)
+if geo is None:
+    target_lat, target_lon = 51.22, 6.77
+    pretty_address = "Düsseldorf (fallback)"
+    city_status = "❌ City not found — try adding a country, like 'Paris, France'."
+else:
+    target_lat, target_lon, pretty_address = geo
+    city_status = f"✅ Found: {pretty_address}"
+
+# Distance (simple approx: degrees to km)
+dist_km = np.sqrt((target_lat - s_lat)**2 + (target_lon - s_lon)**2) * 111
+
+# Optional seat multiplier (just for fun)
 dist_km_seat = dist_km * seat_multiplier
 
-# --- 7. UI & ALERTS ---
+# --- 8. UI & ALERTS ---
 st.title(f"🚀 Santa Flight Command: {vision}")
 st.caption(f"{city_status} • 💺 Seat: **{seat_name}**")
 
@@ -145,12 +131,12 @@ m2.metric("🚀 Sleigh Speed", f"{current_speed:,} km/h", delta="-Wind Delay" if
 m3.metric("📏 Distance to You", f"{dist_km_seat:,.1f} km")
 m4.metric("💨 Current Wind", f"{wind_speed} km/h")
 
-# --- 8. MAP & LOG ---
+# --- 9. MAP & LOG ---
 col_map, col_log = st.columns([3, 1])
 
 with col_map:
     df_path = pd.DataFrame(path) if path else pd.DataFrame([{"lon": 0, "lat": 90}])
-    df_city = pd.DataFrame([{"lon": target_lon, "lat": target_lat, "name": city_input.title()}])
+    df_city = pd.DataFrame([{"lon": target_lon, "lat": target_lat, "name": (city_input or "Your City")}])
 
     layer_path = pdk.Layer(
         "ScatterplotLayer",
@@ -158,27 +144,24 @@ with col_map:
         get_position="[lon, lat]",
         get_color=selected["color"],
         get_radius=250000,
-        pickable=False,
+        pickable=False
     )
 
-    # NEW: City marker layer
     layer_city = pdk.Layer(
         "ScatterplotLayer",
         data=df_city,
         get_position="[lon, lat]",
         get_color=[0, 150, 255],
         get_radius=380000,
-        pickable=True,
+        pickable=True
     )
 
-    st.pydeck_chart(
-        pdk.Deck(
-            map_style=selected["bg"],
-            initial_view_state=pdk.ViewState(latitude=s_lat, longitude=s_lon, zoom=1.5),
-            layers=[layer_path, layer_city],
-            tooltip={"text": "{name}"},
-        )
-    )
+    st.pydeck_chart(pdk.Deck(
+        map_style=selected["bg"],
+        initial_view_state=pdk.ViewState(latitude=s_lat, longitude=s_lon, zoom=1.5),
+        layers=[layer_path, layer_city],
+        tooltip={"text": "{name}"}
+    ))
 
 with col_log:
     st.subheader("📝 Sector Clearance")
@@ -188,7 +171,7 @@ with col_log:
         ("Auckland", "13:00 UTC"),
         ("Sydney", "14:00 UTC"),
         ("Tokyo", "15:00 UTC"),
-        ("Beijing", "16:00 UTC"),
+        ("Beijing", "16:00 UTC")
     ]
 
     for city, time_str in regions:
