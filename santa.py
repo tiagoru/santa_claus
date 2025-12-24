@@ -1,3 +1,15 @@
+# Santa Radar HQ (v2.4) — Any City Worldwide + Infrared Look + Satellite WITH Country Labels + PT-BR toggle
+# Streamlit Cloud requirements.txt:
+# streamlit
+# pandas
+# numpy
+# pydeck
+# streamlit-autorefresh
+# geopy
+#
+# Streamlit Cloud (Secrets) recommended for Mapbox styles:
+# MAPBOX_API_KEY="YOUR_MAPBOX_TOKEN"
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,7 +20,7 @@ from streamlit_autorefresh import st_autorefresh
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 
 # -----------------------------
 # AUTO-REFRESH + PAGE
@@ -46,6 +58,7 @@ STR = {
         "systems_ok": "✅ Sleigh systems nominal.",
         "sat_overlay": "🛰️ Satellite Paths Overlay",
         "infra_glow": "🔥 Infrared Glow Strength",
+        "labels": "🗺️ Show country labels",
     },
     "pt-BR": {
         "title": "🚀 Comando de Voo do Papai Noel",
@@ -73,6 +86,7 @@ STR = {
         "systems_ok": "✅ Sistemas do trenó OK.",
         "sat_overlay": "🛰️ Trilhas de Satélites (Overlay)",
         "infra_glow": "🔥 Força do Brilho Infravermelho",
+        "labels": "🗺️ Mostrar nomes de países",
     },
 }
 
@@ -87,7 +101,7 @@ def play_sound(url: str):
 # -----------------------------
 @st.cache_data(ttl=60 * 60)
 def geocode_city(city_text: str):
-    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app_v23")
+    geolocator = Nominatim(user_agent="santa_radar_hq_streamlit_app_v24")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
     loc = geocode(city_text)
     if not loc:
@@ -178,25 +192,28 @@ with st.sidebar:
     else:
         st.success(T["wind_ok"])
 
-    # Vision extra controls
+    # Vision extras
     show_sat = True
+    show_labels = True
     glow = 1.2
+
     if vision == "Satellite View":
+        show_labels = st.toggle(T["labels"], value=True)
         show_sat = st.toggle(T["sat_overlay"], value=True)
+
     if vision == "Infrared Heat":
         glow = st.slider(T["infra_glow"], 0.6, 2.5, 1.2, 0.1)
 
 # -----------------------------
-# MAP STYLES
-# (Infrared = dark base + heat overlay)
-# (Satellite = satellite imagery)
+# MAP STYLE (UPDATED)
+# Satellite View now supports:
+# - satellite-streets-v12 (labels on)
+# - satellite-v9 (labels off)
 # -----------------------------
-MAP_STYLES = {
-    "Tactical Night Vision": "mapbox://styles/mapbox/dark-v11",
-    "Infrared Heat": "mapbox://styles/mapbox/dark-v11",
-    "Satellite View": "mapbox://styles/mapbox/satellite-v9",
-}
-map_style = MAP_STYLES.get(vision, "mapbox://styles/mapbox/dark-v11")
+if vision == "Satellite View":
+    map_style = "mapbox://styles/mapbox/satellite-streets-v12" if show_labels else "mapbox://styles/mapbox/satellite-v9"
+else:
+    map_style = "mapbox://styles/mapbox/dark-v11"
 
 # -----------------------------
 # CITY LOOKUP
@@ -215,7 +232,7 @@ dist_km = np.sqrt((target_lat - s_lat) ** 2 + (target_lon - s_lon) ** 2) * 111
 dist_km_seat = dist_km * seat_multiplier
 
 # -----------------------------
-# SATELLITE ORBITS OVERLAY (decorative)
+# SATELLITE ORBITS OVERLAY (DECORATIVE)
 # -----------------------------
 def generate_orbits(t: datetime, n_orbits: int = 6, points_per_orbit: int = 160):
     phase = (t.timestamp() / 60.0) % (2 * np.pi)
@@ -240,7 +257,7 @@ def generate_orbits(t: datetime, n_orbits: int = 6, points_per_orbit: int = 160)
 df_orbits, df_sats = generate_orbits(now_utc)
 
 # -----------------------------
-# UI HEADER + EVENT
+# UI HEADER + MIDNIGHT EVENT
 # -----------------------------
 st.title(f'{T["title"]}: {vision}  •  v{APP_VERSION}')
 st.caption(f"{city_status} • 💺 {seat_name}")
@@ -268,7 +285,7 @@ with col_map:
 
     layers = []
 
-    # Santa path (points)
+    # Santa path points
     santa_color = [0, 255, 65] if vision == "Tactical Night Vision" else ([255, 255, 255] if vision == "Satellite View" else [255, 120, 0])
     layers.append(
         pdk.Layer(
@@ -293,7 +310,7 @@ with col_map:
         )
     )
 
-    # Infrared: heat glow overlay
+    # Infrared glow overlay
     if vision == "Infrared Heat":
         layers.append(
             pdk.Layer(
@@ -315,7 +332,7 @@ with col_map:
             )
         )
 
-    # Satellite: orbits + moving satellite dots
+    # Satellite paths overlay
     if vision == "Satellite View" and show_sat:
         layers.append(
             pdk.Layer(
