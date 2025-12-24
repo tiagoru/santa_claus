@@ -3,79 +3,112 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
-# Try to get GPS, but don't crash if it's not installed
+# --- Try to load GPS ---
 try:
     from streamlit_geolocation import streamlit_geolocation
     HAS_GPS = True
 except ImportError:
     HAS_GPS = False
 
-st.set_page_config(page_title="Santa Radar", page_icon="🎅")
+st.set_page_config(page_title="Santa Command Center", layout="wide")
 
-# --- Header ---
-st.title("🎅 Santa's Live Flight Radar")
-st.write("Current Status: **In Flight - Delivering Presents!**")
+# --- Custom Styling ---
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; color: #ffffff; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🎅 Real-Time Global Santa Tracker")
 
 # --- Sidebar Controls ---
-st.sidebar.header("📡 Calibration")
-radar_quality = st.sidebar.select_slider("Radar Quality", ["Standard", "Deep Scan", "Quantum"])
-gps_strength = st.sidebar.slider("GPS Signal Strength", 0, 100, 90)
+with st.sidebar:
+    st.header("🛰️ Satellite Controls")
+    radar_val = st.select_slider("Radar Sensitivity", options=["Low", "Medium", "High", "Quantum Scan"])
+    gps_stability = st.slider("GPS Link Stability", 0, 100, 95)
+    
+    st.divider()
+    user_lat, user_lon = 51.22, 6.77 # Default to Dusseldorf
+    
+    if HAS_GPS:
+        st.subheader("📍 Your Chimney GPS")
+        loc = streamlit_geolocation()
+        if loc and loc.get('latitude'):
+            user_lat, user_lon = loc['latitude'], loc['longitude']
+            st.success("Target Locked!")
+    
+    st.info(f"Tracking from: {user_lat}, {user_lon}")
 
-# --- Location Logic ---
-user_lat, user_lon = None, None
-if HAS_GPS:
-    st.sidebar.write("Click below to ping your chimney:")
-    location = streamlit_geolocation()
-    if location and location.get('latitude'):
-        user_lat = location['latitude']
-        user_lon = location['longitude']
-        st.sidebar.success("📍 Your position is synced!")
-
-# Fallback if GPS is blocked/not used
-if not user_lat:
-    st.sidebar.info("Or enter coordinates manually:")
-    user_lat = st.sidebar.number_input("Your Latitude", value=51.22)
-    user_lon = st.sidebar.number_input("Your Longitude", value=6.77)
-
-# --- Santa Path Logic (Based on Dec 24th) ---
-def calculate_santa():
+# --- Logic: Where is Santa? ---
+def get_santa_world_pos():
     now = datetime.now(timezone.utc)
-    # Santa moves from East (180) to West (-180) over 24 hours
-    # This calculates his position based on the current hour/minute
-    progress = (now.hour + now.minute/60) / 24
-    current_lon = 180 - (progress * 360)
-    current_lat = 30 * np.sin(progress * np.pi * 2) # S-curve flight path
     
-    # Generate breadcrumbs (last 10 places)
-    history = []
-    for i in range(10):
-        prev_progress = max(0, progress - (i * 0.02))
-        h_lon = 180 - (prev_progress * 360)
-        h_lat = 30 * np.sin(prev_progress * np.pi * 2)
-        history.append({"lat": h_lat, "lon": h_lon, "Label": "Past Path"})
+    # Santa follows the "Midnight" line. 
+    # At 12:00 UTC (Noon), it's midnight at the International Date Line (180°).
+    # At 00:00 UTC, it's midnight in London (0°).
+    # Formula: Longitude = (UTC_Hour + UTC_Minute/60) * 15 degrees - 180
+    
+    # We add 12 hours because he starts at the Date Line at the start of the UTC day
+    total_hours_utc = now.hour + (now.minute / 60) + (now.second / 3600)
+    current_lon = 180 - (total_hours_utc * 15)
+    
+    # Ensure longitude stays between -180 and 180
+    if current_lon < -180:
+        current_lon += 360
         
-    return history, {"lat": current_lat, "lon": current_lon, "Label": "SANTA"}
-
-# --- Display Data ---
-history_data, current_santa = calculate_santa()
-
-# Combine all points for the map
-map_df = pd.DataFrame(history_data)
-map_df = pd.concat([map_df, pd.DataFrame([current_santa])])
-map_df = pd.concat([map_df, pd.DataFrame([{"lat": user_lat, "lon": user_lon, "Label": "You"}])])
-
-# Display the Map
-st.subheader("🌍 Live Map")
-if gps_strength > 10:
-    st.map(map_df, color="#FF0000", size=40)
+    # Santa zig-zags North to South to hit every house
+    current_lat = 40 * np.sin(total_hours_utc * 0.5) 
     
-    # Fun Distance calculation
-    dist = np.sqrt((user_lat - current_santa['lat'])**2 + (user_lon - current_santa['lon'])**2) * 111
-    st.metric("Distance from Santa", f"{dist:,.0f} km", delta="He's getting closer!")
-else:
-    st.error("🚨 Signal Lost! Increase GPS Strength in the sidebar to reconnect.")
+    # Generate the "Tracking Path" (Where he was the last 6 hours)
+    path_points = []
+    for h in range(1, 13): # Last 12 points
+        past_hours = total_hours_utc - (h * 0.5)
+        p_lon = 180 - (past_hours * 15)
+        if p_lon < -180: p_lon += 360
+        p_lat = 40 * np.sin(past_hours * 0.5)
+        path_points.append({"lat": p_lat, "lon": p_lon, "Icon": "Past Location"})
+        
+    return path_points, {"lat": current_lat, "lon": current_lon, "Icon": "SANTA"}
 
-# --- Action Buttons ---
-if st.button("🔔 Send Sleigh Bell Signal"):
-    st.snow()
-    st.balloons()
+# --- Process Data ---
+history, current = get_santa_world_pos()
+
+# --- Display Content ---
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    if gps_stability > 15:
+        # Build DataFrame for Map
+        df_history = pd.DataFrame(history)
+        df_current = pd.DataFrame([current])
+        df_user = pd.DataFrame([{"lat": user_lat, "lon": user_lon, "Icon": "You"}])
+        
+        # Merge all
+        full_map_df = pd.concat([df_history, df_current, df_user])
+        
+        # Show Map
+        st.map(full_map_df, color="#ff0000", size=50)
+    else:
+        st.error("📡 SIGNAL LOST: Increase GPS Link Stability to recover Santa's coordinates!")
+
+with col2:
+    st.metric("Current Longitude", f"{current['lon']:.2f}°")
+    st.metric("Current Latitude", f"{current['lat']:.2f}°")
+    
+    # Calculate Distance
+    dist = np.sqrt((user_lat - current['lat'])**2 + (user_lon - current['lon'])**2) * 111
+    st.metric("Distance to You", f"{dist:,.0f} km")
+    
+    if st.button("🔔 Sound Sleigh Bells"):
+        st.snow()
+        st.toast("Santa heard your bells!")
+
+# --- Status Updates ---
+st.divider()
+messages = [
+    "Checking the list twice...",
+    "Speeding over the Pacific Ocean!",
+    "Reindeer refueling on magic carrots.",
+    "Adjusting for high-altitude winds."
+]
+st.write(f"**Live Feed:** {messages[int(datetime.now().minute % 4)]}")
